@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <TextView
+        android:id="@+id/tvState"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="상태: Idle"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tvPartial"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="부분 인식:" />
+
+    <TextView
+        android:id="@+id/tvFinal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="최종 결과:" />
+</LinearLayout>

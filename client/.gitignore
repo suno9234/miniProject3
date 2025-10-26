@@ -1,0 +1,80 @@
+# -----------------------------
+# Android Studio & IntelliJ
+# -----------------------------
+*.iml
+.idea/
+!.idea/codeStyles
+!.idea/runConfigurations
+
+# -----------------------------
+# Gradle
+# -----------------------------
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# 로컬 빌드 환경 설정 파일 (절대 커밋 금지)
+local.properties
+
+# -----------------------------
+# Android NDK / CMake
+# -----------------------------
+.externalNativeBuild/
+.cxx/
+
+# -----------------------------
+# Log / Temp / Cache
+# -----------------------------
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.orig
+.DS_Store
+Thumbs.db
+captures/
+
+# -----------------------------
+# Generated files
+# -----------------------------
+/app/release/
+/app/debug/
+/app/intermediates/
+/app/generated/
+/app/outputs/
+/app/reports/
+
+# -----------------------------
+# Kotlin / Java
+# -----------------------------
+out/
+bin/
+gen/
+
+# -----------------------------
+# Firebase / Google Services
+# -----------------------------
+google-services.json
+
+# -----------------------------
+# Jetpack Compose / KSP / Room
+# -----------------------------
+build/generated/
+build/ksp/
+
+# -----------------------------
+# Misc
+# -----------------------------
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+/.idea/workspace.xml
+/.idea/caches/
+/.idea/libraries/
+/.idea/modules.xml
+
+# -----------------------------
+# OS-specific
+# -----------------------------
+ehthumbs.db
+Icon?
