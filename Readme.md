@@ -20,6 +20,8 @@ docker-compose up --build
 - DB: localhost:3306
 
 ## 📁전체 디렉터리 구조
+
+```
 backend/
 ├── app/
 │   ├── models.py                    # 전역 모델 정의
@@ -52,6 +54,7 @@ backend/
 ├── .env.example                   # 환경변수 예시
 ├── requirements.txt               # Python 의존성
 └── docker-compose.yml            # Docker 설정
+```
 
 ## 🔄 전체 플로우
 API 요청 → agent_router.py
