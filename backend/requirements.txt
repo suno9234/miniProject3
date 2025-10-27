@@ -3,3 +3,4 @@ uvicorn==0.24.0
 pydantic==2.5.0
 sqlalchemy==2.0.23
 pymysql==1.1.0
+aiomysql
