@@ -1,0 +1,17 @@
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 python3.11-venv python3.11-distutils curl build-essential git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
+
+WORKDIR /app
+COPY requirements.prod.txt /app/requirements.txt
+
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r /app/requirements.txt \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+COPY . .
+EXPOSE 8000
+CMD ["python3.11", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

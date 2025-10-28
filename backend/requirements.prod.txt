@@ -1,0 +1,31 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic>=2,<3
+sqlalchemy==2.0.23
+pymysql==1.1.0
+aiomysql
+
+langchain
+langchain-openai
+langchain-core
+langgraph
+
+elasticsearch>=8,<9
+faiss-cpu==1.12.0
+sentence-transformers==5.1.2
+
+# ── Transformers 스택 ──
+transformers>=4.44.0
+accelerate>=0.33.0
+huggingface_hub>=0.24.0
+safetensors>=0.4.3
+einops>=0.7.0
+
+# ── PyTorch CUDA 12.1 빌드 ──
+torch==2.4.0+cu121
+
+# 4bit/8bit 양자화
+bitsandbytes==0.43.1
+
+python-dotenv
+requests
