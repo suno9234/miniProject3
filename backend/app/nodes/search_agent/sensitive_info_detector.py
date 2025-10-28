@@ -4,16 +4,15 @@ from app.nodes.state import AppState
 # normalizer #
 class QueryNormalizer:
     """
-    STT로부터 받은 텍스트를 정제
-
-    책임:
-    - filler 제거 ("어", "음", "그니까", "있잖아" 등)
-    - 반복된 구절 축약
-    - 비문을 간단한 요청문 형태로 마무리
-    - AppState.user_query 에 저장
+    사용자의 입력(user_query)을 LLM/검색에 쓰기 적합한 형태로 다듬는다.
+    - 말버릇/군더더기 제거
+    - 반복된 단어 축약
+    - 도메인 용어 표준화 (placeholder)
+    - 문장 마무리 보정
+    결과는 다시 state["user_query"]에 덮어쓴다.
     """
 
-    # 1) 말버릇 / filler / 잡음 후보
+    # filler / 말버릇 / 생각 중 멈춤 등
     FILLER_PATTERNS = [
         r"\b어\b",
         r"\b음\b",
@@ -27,68 +26,71 @@ class QueryNormalizer:
     ]
 
     def remove_fillers(self, text: str) -> str:
+        """어, 음, 그니까... 같은 말버릇 제거"""
         cleaned = text
         for pat in self.FILLER_PATTERNS:
             cleaned = re.sub(pat, " ", cleaned, flags=re.IGNORECASE)
-        # 공백 정리
+        # 중복 공백 정리
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned
 
     def squash_repeats(self, text: str) -> str:
         """
-        너무 가까이 반복되는 단어나 구문을 줄여준다.
-        예: "단가 알려줘 단가 알려줘 그거 단가" -> "단가 알려줘 그거 단가"
-        아주 단순하게만 처리.
+        너무 가까이 반복된 토큰 제거.
+        예: "단가 알려줘 단가 알려줘 그 단가" -> "단가 알려줘 그 단가"
         """
         tokens = text.split()
         result = []
         last = None
         for tok in tokens:
             if tok == last:
-                # 직전 토큰과 동일하면 스킵
                 continue
             result.append(tok)
             last = tok
         return " ".join(result)
 
-    # 전문/기술 용어 정제
     def normalize_domain_terms(self, text: str) -> str:
         """
-            domain 내용 정제
-            예: '텀 -> 더미 로드', '캘 -> 캘리브레이션'
+        도메인/내부 용어를 표준화하거나 애매한 표현을 명확하게 바꾸는 자리.
+        예:
+        - "텀" -> "더미 로드"
+        - "캘킷" -> "캘리브레이션 키트"
         """
+        # TODO: 사내 도메인 용어 매핑 룰 적용 예정
         return text
 
     def finalize_request_style(self, text: str) -> str:
         """
-        문장 끝이 너무 깨져 있으면 간단한 요청형으로 마무리.
-        예: "카니발 다음주 재고 있나 예약"
-          -> "카니발 다음주 재고 있나요? 예약 가능한가요?"
-        이건 규칙 기반으로는 완벽할 수 없으니까 최소만 보정.
+        문장 마무리가 애매하면 간단한 요청/질문형으로 정리.
+        짧은 쿼리에만 '?'를 붙여 읽기 쉽게 만든다.
         """
         t = text.strip()
-
-        # 끝이 명사/동사로 딱 끊기면 물음표 하나 붙여준다.
         if not re.search(r"[.?!]$", t):
-            # 너무 공격적으로 붙이지 말고 짧은 쿼리면만 붙이자
             if len(t) <= 80:
                 t = t + "?"
         return t
 
-
     def apply(self, state: AppState) -> AppState:
         """
-        입력: AppState (user_query_raw 가 있다고 가정)
-        출력: AppState (user_query 가 추가/갱신된 복사본)
+        입력: AppState (state["user_query"]가 있어야 함)
+        출력: AppState (state["user_query"]를 정제된 텍스트로 덮어쓴 사본)
         """
-        raw = state.get("user_query_raw", "") or ""
-        normalized = raw
+        original = state.get("user_query", "") or ""
+        normalized = original
 
+        # 1) filler 제거
         normalized = self.remove_fillers(normalized)
+
+        # 2) 반복된 단어/구절 축약
         normalized = self.squash_repeats(normalized)
+
+        # 3) 도메인 용어 표준화 
         normalized = self.normalize_domain_terms(normalized)
+
+        # 4) 문장형으로 마무리
         normalized = self.finalize_request_style(normalized)
 
+        # 불변 패턴 유지: 복사 후 덮어쓰기
         new_state: AppState = {**state}
         new_state["user_query"] = normalized
         return new_state
@@ -97,14 +99,12 @@ class QueryNormalizer:
 # SensitiveInfoDetector #
 class SensitiveInfoDetector:
     def __init__(self) -> None:
-        # 주민등록번호, 이메일, 전화번호 등
         self.sensitive_patterns = [
             re.compile(r"\b(\d{6})[- ]?(\d{7})\b"),  # 주민번호
             re.compile(r"\b([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b"),  # 이메일
             re.compile(r"\b(\d{2,4})[- ]?(\d{3,4})[- ]?(\d{4})\b"),  # 전화번호
         ]
 
-        # 리스키 키워드 패턴 원문 리스트
         risky_keywords = [
             r"\b(?:CPU|GPU|메모리|RAM|스토리지|용량|성능|스펙|사양)\b",
             r"\b(?:가격|비용|원가|단가|할인|할인율|마진|수익)\b",
@@ -119,7 +119,6 @@ class SensitiveInfoDetector:
         ]
         self.risky_patterns = [re.compile(p, re.IGNORECASE) for p in risky_keywords]
 
-    # --- 감지 로직 ---
     def detect_sensitive_info(self, text: str) -> bool:
         return any(p.search(text) for p in self.sensitive_patterns)
 
@@ -129,19 +128,16 @@ class SensitiveInfoDetector:
     def detect_any_sensitive_content(self, text: str) -> bool:
         return self.detect_sensitive_info(text) or self.detect_risky_keywords(text)
 
-    # --- 마스킹 로직 ---
     def mask_sensitive_info(self, text: str) -> str:
-        import re
-
-        # 주민번호: 뒷자리 전부 감춤
+        # 주민번호 -> 뒤자리 가림
         text = re.sub(r"(\b\d{6})-(\d{7}\b)", r"\1-*******", text)
 
-        # 전화번호: 마지막 4자리 감춤
+        # 전화번호 -> 마지막 4자리 가림
         text = re.sub(r"(01[0-9]-?\d{3,4}-?)(\d{4}\b)", r"\1****", text)
 
-        # 이메일: 로컬파트 일부만 남기고 나머지 *
+        # 이메일 -> 로컬파트 절반만 남기고 나머지 '*'
         def _mask_email(m):
-            full = m.group(0)  # 전체 매치 "local@domain"
+            full = m.group(0)
             local, domain = full.split("@", 1)
             keep = max(1, len(local) // 2)
             return local[:keep] + "*" * (len(local) - keep) + "@" + domain
@@ -158,15 +154,8 @@ class SensitiveInfoDetector:
     def mask_all_sensitive_content(self, text: str) -> str:
         return self.mask_risky_keywords(self.mask_sensitive_info(text))
 
-    # --- 💡 새 노드 진입점 ---
     def apply(self, state: AppState) -> AppState:
-        """
-        그래프 노드에서 호출:
-        입력: 현재 AppState (최소 user_query는 있다고 가정)
-        출력: is_sensative / masked_user_query 를 채워 넣은 새로운 AppState
-        """
         user_query = state.get("user_query", "") or ""
-
         has_sensitive = self.detect_any_sensitive_content(user_query)
 
         masked_query = (
@@ -175,10 +164,7 @@ class SensitiveInfoDetector:
             else user_query
         )
 
-        # 불변성 유지: 복사본 만들고 필드만 추가/갱신
         new_state: AppState = {**state}
-        new_state["is_sensative"] = has_sensitive  # 팀 정의 필드명 그대로 사용
+        new_state["is_sensative"] = has_sensitive
         new_state["masked_user_query"] = masked_query
-
         return new_state
-
