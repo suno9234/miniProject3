@@ -40,8 +40,8 @@ jobs:
             fi
 
             # 3) compose 파일 위치 확인
-            if [ ! -f "$BDIR/docker-compose.yml" ] && [ ! -f "$BDIR/docker-compose.yaml" ]; then
-              echo "docker-compose.yml not found in $BDIR"; exit 1
+            if [ ! -f "$BDIR/docker-compose.prod.yml" ] && [ ! -f "$BDIR/docker-compose.prod.yaml" ]; then
+              echo "docker-compose.prod.yml not found in $BDIR"; exit 1
             fi
 
             # 4) 컨테이너에서 읽도록 env 배치 (복사 or 심링크 중 택1)
@@ -51,14 +51,14 @@ jobs:
 
             # 5) 컨테이너 재구동
             cd "$BDIR"
-            docker compose down || true
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml down || true
             docker system prune -f || true
-            docker compose up -d --build
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
             # 6) 상태 출력 + 헬스체크
             echo "Waiting for services to start..."
             sleep 15
-            docker compose ps
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
             echo "Checking API health..."
             # compose에서 8000을 호스트로 노출했다고 가정
             curl -fsS http://localhost:8000 || echo "API not ready yet"
