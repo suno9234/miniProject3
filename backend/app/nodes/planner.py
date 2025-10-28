@@ -13,8 +13,7 @@ def planner_node(state: AppState) -> AppState:
 
             에이전트 옵션:
             1. search: 내부/외부 데이터 기반 검색 및 질문 답변
-            2. inventory: 특정 물품의 재고 확인
-            3. reservation: 회의실/기구/시설 등 예약
+            2. inventory: 특정 물품의 재고 확인 후 대여 가능 여부 안내
         """),
         ("user", "{query}")
     ])
