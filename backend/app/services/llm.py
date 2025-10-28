@@ -13,5 +13,8 @@ llm = ChatOpenAI(
     api_key=os.getenv('OPENAI_API_KEY')
 )
 
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, max_tokens=600)
+
+
 # 플래너용 structured output LLM
 llm_with_agent_route = llm.with_structured_output(AgentRoute)
