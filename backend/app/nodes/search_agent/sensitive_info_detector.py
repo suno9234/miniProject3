@@ -1,78 +1,61 @@
-import re
-import requests
-from typing import Dict, Any
+import re, json
 from app.nodes.state import AppState
+from app.services.llm import internal_pipe
+
+# Fallback
+# LLM호출 실패 시 기본 정규식 기반 탐지를 통해 최소한의 민감데이터 마스킹
 
 # normalizer #
 class QueryNormalizer:
-    """
-    STT로부터 받은 텍스트를 LLM을 사용하여 정제
-    
-    책임:
-    - filler 제거 ("어", "음", "그니까", "있잖아" 등)
-    - 반복된 구절 축약
-    - 비문을 간단한 요청문 형태로 마무리
-    - AppState.user_query 에 저장
-    """
+    def __init__(self, pipe=internal_pipe):
+        if pipe is None:
+            raise ValueError("QueryNormalizer needs a valid pipeline")
+        self.pipe = pipe
 
-    def __init__(self, llm_url: str = "http://localhost:8001/chat"):
-        self.llm_url = llm_url
-        
-    def get_normalization_prompt(self, raw_text: str) -> str:
-        """쿼리 정제를 위한 프롬프트 생성"""
+    def _build_prompt(self, raw_query: str) -> str:
         return f"""
-다음은 STT(Speech-to-Text)로 변환된 사용자 입력입니다. 이를 깔끔하고 명확한 질문으로 정제해주세요.
+당신은 사용자의 음성/STT 질의를 자연스럽고 간결한 텍스트 쿼리로 정제하는 도우미다.
 
-원본 텍스트: "{raw_text}"
+규칙:
+- '어', '음', '그니까' 같은 말버릇 삭제
+- 중복 표현 정리
+- 의미 왜곡 금지 (정보 추가 금지)
+- 불완전하면 자연스러운 질문형으로 마무리
+- 정제된 문장만 한 줄로 출력. 설명/따옴표 금지.
 
-정제 규칙:
-1. 말버릇/필러 제거: "어", "음", "그니까", "있잖아", "일단" 등
-2. 반복 구문 축약: "단가 알려줘 단가 알려줘" → "단가 알려줘"
-3. 문법 오류 수정: 부자연스러운 표현을 자연스럽게
-4. 질문 형태 완성: 명확한 질문문으로 마무리
-5. 전문용어 정제: 줄임말이나 오타 수정
+사용자 질의:
+{raw_query}
 
-정제된 결과만 한 줄로 출력하세요.
-앞이나 뒤에 설명, 따옴표, 라벨을 붙이지 마세요.
-출력은 오직 최종 문장 그 자체만이어야 합니다:
-"""
+정제된 질의:
+""".strip()
 
-    def normalize_with_llm(self, raw_text: str) -> str:
-        """LLM을 사용하여 텍스트 정제 (동기)"""
-        prompt = self.get_normalization_prompt(raw_text)
-        
-        try:
-            response = requests.post(
-                self.llm_url,
-                json={
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                    "max_tokens": 200
-                },
-                timeout=10.0
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("choices", [{}])[0].get("message", {}).get("content", raw_text).strip()
-            else:
-                print(f"LLM 요청 실패: {response.status_code}")
-                return raw_text
-                
-        except Exception as e:
-            print(f"LLM 정제 중 오류: {e}")
-            return raw_text
+    def _call_model(self, prompt: str) -> str:
+        # internal_pipe는 HF pipeline("text-generation")이라고 가정
+        out = self.pipe(
+            prompt,
+            max_new_tokens=128,
+            temperature=0.1,
+            do_sample=False,
+        )
+        # pipeline 출력은 보통 [{"generated_text": "..."}] 형태
+        full = out[0]["generated_text"]
+
+        # 모델이 prompt까지 복사해서 같이 줄 수 있으니까 마지막 줄만 뽑는 식으로 정리
+        cleaned = full.splitlines()[-1].strip()
+        first_line = cleaned.splitlines()[0].strip()
+        return first_line
 
     def apply(self, state: AppState) -> AppState:
-        """
-            입력: AppState (state['user_query']에 STT 그대로/원문이 있다고 가정)
-            출력: AppState (state['user_query']를 정제된 텍스트로 덮어쓴 복사본)
-        """
         raw = state.get("user_query", "") or ""
 
-        normalized = self.normalize_with_llm(raw)
+        prompt = self._build_prompt(raw)
+        try:
+            normalized = self._call_model(prompt)
+        except Exception as e:
+            print(f"[QueryNormalizer] local model failed ({e}), fallback to raw.")
+            normalized = raw
 
-        if not normalized or normalized.strip() == "":
+        if not normalized.strip():
             normalized = raw
 
         new_state: AppState = {**state}
@@ -81,125 +64,115 @@ class QueryNormalizer:
 
 
 # SensitiveInfoDetector #
-import json
-import requests
-
 class SensitiveInfoDetector:
-    def __init__(self, llm_url: str = "http://localhost:8002/chat") -> None:
-        """
-        llm_url:
-            - 민감정보 감지는 반드시 내부/사내용 안전 모델을 사용한다는 전제를 가진다.
-            - 외부 오픈 모델을 쓰면 안 된다.
-        """
-        self.llm_url = llm_url
+    def __init__(self, pipe=internal_pipe):
+        if pipe is None:
+            raise ValueError("SensitiveInfoDetector needs a valid pipeline")
+        self.pipe = pipe
 
-    def get_sensitivity_detection_prompt(self, text: str) -> str:
-        """
-        LLM에게 민감 여부와 마스킹된 쿼리를 JSON으로만 반환하게 강제하는 프롬프트.
-        """
+        # 정규식 기반 fallback 준비. 최소한의 마스킹 규칙
+        self.sensitive_patterns = [
+            re.compile(r"(\d{6})[- ]?(\d{7})\b"),  # 주민번호 유사
+            re.compile(r"(\d{2,4})[- ]?(\d{3,4})[- ]?(\d{4})\b"),  # 전화번호
+        ]
+        risky_keywords = [
+            r"(단가|가격|원가|비용|할인|마진|수익)",
+            r"(고객사|파트너|협력사)",
+            r"(로드맵|출시일|내부|기밀)"
+        ]
+        self.risky_patterns = [re.compile(p, re.IGNORECASE) for p in risky_keywords]
+
+    def _build_prompt(self, text: str) -> str:
         return f"""
 너는 민감정보 보안 필터다.
-아래 사용자의 질의에 대해 두 가지를 판단해 JSON으로만 답하라.
+아래 사용자의 질의를 분석해 두 가지를 결정하고 JSON으로만 한 줄로 출력하라.
 
 1. is_sensitive:
-   - true  : 민감한 정보(개인 식별 정보, 내부 단가/원가, 고객사/파트너 실명, 비공개 일정/로드맵 등)가 포함된 경우
-   - false : 민감한 정보가 전혀 없는 경우
+   - true  : 개인 식별 정보(전화번호, 주민번호 등) 또는
+             회사 내부 단가/원가/마진/수익/가격조건, 고객사명, 파트너명,
+             비공개 로드맵/출시일 등 민감 정보가 포함됨
+   - false : 위 민감 정보가 전혀 없음
 
 2. safe_query:
-   - 외부(오픈 모델 / 외부 검색 엔진 등)에 그대로 노출해도 되는 안전한 버전의 쿼리
-   - 민감한 부분(전화번호, 이메일, 주민등록번호, 고객사명, 내부 단가/원가, 비공개 일정 등)은 "###"로 마스킹한다
-   - 민감하지 않다면 원문을 그대로 사용한다
+   - 외부에 보내도 되는 안전한 쿼리
+   - 민감한 부분은 전부 "###" 치환
+   - 민감하지 않으면 원문 그대로
 
-반드시 아래 JSON 한 줄만 출력하고, 그 외 설명/마크다운/코드블록은 출력하지 마라.
-
-예시 출력 (예시는 설명일 뿐 그대로 복사하지 마라):
-{"is_sensitive": true, "safe_query": "고객 ### 단가 알려줘?"}
+JSON 한 줄만 출력하라. 마크다운/설명 금지.
+예: {{"is_sensitive": true, "safe_query": "고객 ### 단가 알려줘?"}}
 
 사용자 질의:
-"{text}"
+{text}
 """.strip()
 
-    def detect_and_mask_with_llm(self, text: str) -> tuple[bool, str]:
-        """
-        text(정제된 user_query)를 LLM에 보내서
-        - 민감 여부(bool)
-        - 외부로 내보내도 되는 마스킹된 쿼리(safe_query)
-        를 받아온다.
+    def _call_model_for_mask(self, text: str) -> tuple[bool, str] | None:
+        prompt = self._build_prompt(text)
+        try:
+            out = self.pipe(
+                prompt,
+                max_new_tokens=256,
+                temperature=0.1,
+                do_sample=False,
+            )
+        except Exception as e:
+            print(f"[SensitiveInfoDetector] local model failed: {e}")
+            return None
 
-        반환:
-            (is_sensitive, masked_text)
-
-        보안상 중요한 동작:
-        - LLM 출력은 반드시 JSON이라고 가정하고 json.loads()로만 읽는다.
-        - 파싱 실패나 통신 에러 시에는 보수적으로:
-            is_sensitive = True
-            masked_text  = "###"
-          로 리턴한다.
-        """
-        prompt = self.get_sensitivity_detection_prompt(text)
+        full = out[0]["generated_text"]
+        last_line = full.splitlines()[-1].strip()
 
         try:
-            response = requests.post(
-                self.llm_url,
-                json={
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.1,
-                    "max_tokens": 200
-                },
-                timeout=10.0,
-            )
+            data = json.loads(last_line)
+        except Exception:
+            print("[SensitiveInfoDetector] model output not valid JSON, fallback.")
+            return None
 
-            # API 레벨 오류 (예: 500, 404 등)
-            if response.status_code != 200:
-                # 운영시엔 logger.warning(...)으로 바꾸는 게 더 낫다
-                print(f"[SensitiveInfoDetector] LLM 요청 실패: {response.status_code}")
-                # 보수적 fallback
-                return True, "###"
+        is_sensitive = bool(data.get("is_sensitive", False))
+        safe_query = data.get("safe_query", text)
 
-            result_json = response.json()
+        if not isinstance(safe_query, str) or not safe_query.strip():
+            return (True, "###")
 
-            # 모델 응답 텍스트 추출 (일반적인 chat-style 응답 가정)
-            content = (
-                result_json
-                .get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            ).strip()
+        return (is_sensitive, safe_query)
 
-            # JSON 파싱 시도
-            try:
-                data = json.loads(content)
-                is_sensitive = bool(data.get("is_sensitive", False))
-                safe_query  = data.get("safe_query", text)
+    def _fallback_detect_and_mask(self, text: str) -> tuple[bool, str]:
+        is_sensitive = False
+        masked = text
 
-            except Exception:
-                # 모델이 JSON 형식 안 지킨 경우: 가장 안전한 디폴트
-                print("[SensitiveInfoDetector] LLM 응답 JSON 파싱 실패. 보수적 fallback 사용.")
+        # 주민번호 마스킹
+        masked = re.sub(r"(\d{6})[- ]?(\d{7}\b)", r"\1-*******", masked)
+
+        # 전화번호 마스킹
+        masked = re.sub(r"(01[0-9]-?\d{3,4}-?)(\d{4})", r"\1****", masked)
+
+        # risky 키워드 감지 → 민감 플래그 True, 텍스트 치환
+        for p in self.risky_patterns:
+            if p.search(text):
                 is_sensitive = True
-                safe_query = "###"
+                masked = p.sub("###", masked)
 
-            # 방어로직: safe_query가 비정상적으로 비었으면 최소한 마스킹된 형태로 막아
-            if not safe_query or safe_query.strip() == "":
+        # 개인정보 패턴도 감지되면 민감 True
+        for p in self.sensitive_patterns:
+            if p.search(text):
                 is_sensitive = True
-                safe_query = "###"
 
-            return is_sensitive, safe_query
+        if is_sensitive and not masked.strip():
+            masked = "###"
 
-        except Exception as e:
-            # 통신 자체 실패도 민감한 걸로 취급
-            print(f"[SensitiveInfoDetector] LLM 민감정보 감지 중 예외 발생: {e}")
-            return True, "###"
-
+        if not is_sensitive:
+            return (False, text)
+        return (True, masked)
 
     def apply(self, state: AppState) -> AppState:
         user_query = state.get("user_query", "") or ""
-        has_sensitive, masked_query = self.detect_and_mask_with_llm(user_query)
+
+        result = self._call_model_for_mask(user_query)
+        if result is not None:
+            has_sensitive, safe_query = result
+        else:
+            has_sensitive, safe_query = self._fallback_detect_and_mask(user_query)
 
         new_state: AppState = {**state}
         new_state["is_sensative"] = has_sensitive
-        new_state["masked_user_query"] = masked_query
+        new_state["masked_user_query"] = safe_query
         return new_state
-
-
