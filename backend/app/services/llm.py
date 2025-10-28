@@ -13,7 +13,7 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "test")
 
 if ENVIRONMENT == "operate":
     # 운영 환경에서는 Gemma 7B 모델 사용
-    INTERNAL_LLM_MODEL = "google/gemma-7b"
+    INTERNAL_LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
     device_map = "cuda"
     
     quantization_config = BitsAndBytesConfig(load_in_4bit=True)
