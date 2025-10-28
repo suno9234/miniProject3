@@ -1,7 +1,10 @@
 # LLM 설정 및 structured output 정의
 import os
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from app.models import AgentRoute
+
+load_dotenv()
 
 # 기본 LLM
 llm = ChatOpenAI(
