@@ -32,6 +32,8 @@ else:
     internal_llm = AutoModelForCausalLM.from_pretrained(INTERNAL_LLM_MODEL, device_map=device_map)
 
 
+load_dotenv()
+
 # 기본 LLM
 llm = ChatOpenAI(
     model=os.getenv('OPENAI_MODEL', 'gpt-4o'),
@@ -40,8 +42,9 @@ llm = ChatOpenAI(
 )
 
 
-
 internal_pipe = pipeline("text-generation", model=internal_llm, tokenizer=tokenizer, max_new_tokens=256)
+
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, max_tokens=600)
 
 # 플래너용 structured output LLM
 llm_with_agent_route = llm.with_structured_output(AgentRoute)

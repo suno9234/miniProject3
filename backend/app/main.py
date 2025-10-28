@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.agent_router import router as agent_router
+from app.api.agent_router import router as agent_router
 
 # 로깅 설정
 logging.basicConfig(

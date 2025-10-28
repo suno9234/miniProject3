@@ -1,0 +1,64 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [ backend ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          timeout: 120s
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            APP=/home/ubuntu/app
+            SRC=$APP/src
+            BDIR=$SRC/backend
+            ENV_SRC=$APP/.env
+            ENV_DST=$BDIR/.env
+
+            # 1) 환경변수 저장 (상위 공유 경로)
+            mkdir -p "$APP"
+            printf "%s\n" "${{ secrets.DB_ENV_VARS }}" > "$ENV_SRC"
+
+            # 2) 소스 받기/업데이트 (상위 폴더에 .env가 있어도 영향 없음)
+            if [ ! -d "$SRC/.git" ]; then
+              git clone -b backend https://github.com/suno9234/miniProject3.git "$SRC"
+            else
+              cd "$SRC"
+              git fetch origin
+              git checkout backend
+              git reset --hard origin/backend
+            fi
+
+            # 3) compose 파일 위치 확인
+            if [ ! -f "$BDIR/docker-compose.yml" ] && [ ! -f "$BDIR/docker-compose.yaml" ]; then
+              echo "docker-compose.yml not found in $BDIR"; exit 1
+            fi
+
+            # 4) 컨테이너에서 읽도록 env 배치 (복사 or 심링크 중 택1)
+            mkdir -p "$BDIR"
+            cp -f "$ENV_SRC" "$ENV_DST"
+            # 심링크 쓰고 싶으면: ln -sf "$ENV_SRC" "$ENV_DST"
+
+            # 5) 컨테이너 재구동
+            cd "$BDIR"
+            docker compose down || true
+            docker system prune -f || true
+            docker compose up -d --build
+
+            # 6) 상태 출력 + 헬스체크
+            echo "Waiting for services to start..."
+            sleep 15
+            docker compose ps
+            echo "Checking API health..."
+            # compose에서 8000을 호스트로 노출했다고 가정
+            curl -fsS http://localhost:8000 || echo "API not ready yet"

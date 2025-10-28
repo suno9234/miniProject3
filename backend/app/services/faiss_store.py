@@ -12,8 +12,6 @@ import os
 from typing import Optional
 import numpy as np
 from dotenv import load_dotenv
-
-# [수정] 'faiss' 라이브러리 자체를 임포트해야 합니다.
 import faiss 
 from sentence_transformers import SentenceTransformer
 

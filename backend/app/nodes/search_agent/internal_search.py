@@ -9,34 +9,30 @@
 import os
 from dotenv import load_dotenv
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from services.internal_retriever import Retriever
-from services.faiss_store import FaissVectorStore
-from state import AppState
+from app.services.internal_retriever import Retriever
+from app.services.faiss_store import FaissVectorStore
+from app.nodes.state import AppState
 from typing import Dict, Any
-from services.llm import internal_pipe
+from app.services.llm import internal_pipe
 
 
 
 # agent Node
 
-def _build_prompt(query: str, contexts: list[str], chat_history: list[Dict[str, str]]) -> str:
-    """
-    RAG 답변 생성을 위한 LLM 프롬프트를 동적으로 생성합니다.
-    (추론 금지 및 출처 인용 규칙 포함)
-    """
-    
-    # 1. 컨텍스트 포맷팅
-    context_str = ""
-    if not contexts:
-        context_str = "검색된 근거 없음."
-    else:
-        for i, context in enumerate(contexts, 1):
-            context_str += f"[출처: {i}] {context}\n"
-            
-    # 2. 대화 기록 포맷팅 (간단한 예시)
-    history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
+def _build_prompt(query: str, contexts: list[str], chat_history: list) -> str:
+    context_str = "\n".join([f"[출처: {i}] {c}" for i, c in enumerate(contexts, 1)]) if contexts else "검색된 근거 없음."
 
-    # 3. 최종 프롬프트 템플릿
+    # 튜플과 dict 모두 처리
+    history_strs = []
+    for msg in chat_history:
+        if isinstance(msg, dict) and "role" in msg and "content" in msg:
+            history_strs.append(f"{msg['role']}: {msg['content']}")
+        elif isinstance(msg, (tuple, list)) and len(msg) == 2:
+            history_strs.append(f"{msg[0]}: {msg[1]}")
+        else:
+            history_strs.append(str(msg))
+    history_str = "\n".join(history_strs)
+
     prompt = f"""
 [이전 대화]
 {history_str}
@@ -101,3 +97,6 @@ def internal_searcher(state: AppState, retriever: Retriever, internal_pipeline :
         "internal_documents": contexts,
         "internal_search_result": answer
     }
+
+
+    
