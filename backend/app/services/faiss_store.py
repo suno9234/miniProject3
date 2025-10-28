@@ -1,4 +1,3 @@
-
 """
 FAISS 설정 코드
 =============
@@ -11,10 +10,11 @@ FAISS 설정 코드
 from __future__ import annotations
 import os
 from typing import Optional
-import faiss
 import numpy as np
 from dotenv import load_dotenv
 
+# [수정] 'faiss' 라이브러리 자체를 임포트해야 합니다.
+import faiss 
 from sentence_transformers import SentenceTransformer
 
 load_dotenv()
@@ -23,7 +23,7 @@ load_dotenv()
 class FaissVectorStore:
     """
     Faiss 벡터 스토어 클래스.
-    - 역할: 인코딩, 인덱스 빌드/로드/저장, 벡터 검색
+    - 역할: 인코딩, 인코더 및 인덱스 초기화
     """
     def __init__(self):
         """
@@ -36,6 +36,7 @@ class FaissVectorStore:
         
         # 2. 인코더 및 인덱스 초기화
         self.encoder = SentenceTransformer(self.model_name)
+        # [수정] faiss_store.Index -> faiss.Index
         self.index: Optional[faiss.Index] = None
 
     def encode(self, texts: list[str]) -> np.ndarray:
@@ -57,8 +58,10 @@ class FaissVectorStore:
         dimension = embeddings.shape[1]
 
         if self.metric == 'ip':
+            # [수정] faiss_store.IndexFlatIP -> faiss.IndexFlatIP
             self.index = faiss.IndexFlatIP(dimension)
         elif self.metric == 'l2':
+            # [수정] faiss_store.IndexFlatL2 -> faiss.IndexFlatL2
             self.index = faiss.IndexFlatL2(dimension)
         else:
             raise ValueError("FAISS_METRIC 환경 변수는 'ip' 또는 'l2'여야 합니다.")
@@ -73,12 +76,15 @@ class FaissVectorStore:
         if self.index is None:
             raise RuntimeError("인덱스가 빌드되거나 로드되지 않았습니다.")
         
-        # [수정] 쿼리 벡터가 1D 배열일 경우 2D로 변경
+        # 쿼리 벡터가 1D 배열일 경우 2D로 변경
         if query_vector.ndim == 1:
             query_vector = np.expand_dims(query_vector, axis=0)
 
         if query_vector.ndim != 2 or query_vector.shape[0] != 1:
             raise ValueError("쿼리 벡터는 (1, dimension) 형태의 2차원 배열이어야 합니다.")
+        
+        # [수정] search 함수가 결과를 반환(return)하도록 수정
+        return self.index.search(query_vector.astype("float32"), top_k)
 
     def save(self, path: Optional[str] = None):
         """
@@ -88,6 +94,7 @@ class FaissVectorStore:
         if self.index is None:
             raise RuntimeError("저장할 인덱스가 존재하지 않습니다.")
         
+        # [수정] faiss_store.write_index -> faiss.write_index
         faiss.write_index(self.index, save_path)
         print(f"인덱스를 '{save_path}' 경로에 저장했습니다.")
 
@@ -99,5 +106,7 @@ class FaissVectorStore:
         if not os.path.exists(load_path):
             raise FileNotFoundError(f"'{load_path}' 경로에 인덱스 파일이 없습니다.")
             
+        # [수정] faiss_store.read_index -> faiss.read_index
         self.index = faiss.read_index(load_path)
         print(f"'{load_path}'에서 인덱스를 로드했습니다. (총 {self.index.ntotal}개 벡터)")
+

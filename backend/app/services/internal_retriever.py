@@ -15,7 +15,7 @@ from elasticsearch import Elasticsearch
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import Optional, List, Tuple
 from sentence_transformers import CrossEncoder
-from faiss import FaissVectorStore
+from project.miniProject3.backend.app.services.faiss_store import FaissVectorStore
 from dotenv import load_dotenv
 
 load_dotenv()
