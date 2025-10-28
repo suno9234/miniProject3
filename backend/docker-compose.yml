@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   api:
@@ -23,6 +23,18 @@ services:
       - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
+    environment:
+      - "discovery.type=single-node"
+      - "xpack.security.enabled=false" # 개발용으로 보안 기능 비활성화
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g" # Java 힙 메모리 1GB로 설정
+    ports:
+      - "9200:9200" # 호스트와 컨테이너의 9200 포트 연결
+      - "9300:9300"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
 
 volumes:
   db_data:
