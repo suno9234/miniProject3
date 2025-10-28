@@ -255,4 +255,9 @@ class Retriever:
         return self.rerank(query, combined_candidate_ids, top_k=top_k)
 
 
-
+    def get_documents_by_ids(self, doc_ids: List[int]) -> List[str]:
+        """
+        문서 인덱스 리스트를 실제 텍스트 문서 리스트로 변환합니다.
+        (self.documents 리스트를 사용해 조회)
+        """
+        return [self.documents[i] for i in doc_ids]
