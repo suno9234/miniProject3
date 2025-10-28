@@ -17,9 +17,6 @@
 
 from __future__ import annotations
 
-import asyncio
-asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 from typing import List, Tuple
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -127,7 +124,7 @@ def _build_daily_report(state: AppState) -> str:
     return f"""[일일 대화 보고서]
 생성 시각 : {now}
 사용자 질의 : {state.get('user_query','')}
-민감 여부 : {"Yes" if state.get("is_sensative") else "No"}
+민감 여부 : {"Yes" if state.get("is_sensitive") else "No"}
 마스킹 질의 : {state.get('masked_user_query','')}
 
 [전체 대화 로그]
@@ -141,7 +138,7 @@ def _build_daily_report(state: AppState) -> str:
 # ==================================
 # LangGraph 노드: 최종 응답 생성기
 # ==================================
-async def response_generator_node(state: AppState) -> AppState:
+def response_generator_node(state: AppState) -> AppState:
     """
     내부 RAG 결과(internal_documents)와 외부 LLM 결과(external_search_result)를 종합하여
     최종 답변을 생성하고, 대화 기록 및 보고서를 DB에 저장한다.
@@ -161,7 +158,7 @@ async def response_generator_node(state: AppState) -> AppState:
     external_raw = state.get("external_search_result") or ""
 
     # --- (2) LLM 호출 (내부+외부 종합 요약 생성) ---
-    summary: SynthSummary = await _summary_chain.ainvoke({
+    summary: SynthSummary = _summary_chain.invoke({
         "query": query,
         "internal": joined_internal,
         "external": external_raw,
