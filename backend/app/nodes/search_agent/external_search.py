@@ -4,7 +4,7 @@
 # state의 external_search_result 필드 업데이트
 
 import os
-from ..state import AppState
+from app.nodes.state import AppState
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
