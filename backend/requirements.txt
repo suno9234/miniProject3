@@ -7,3 +7,4 @@ aiomysql
 langchain-openai
 langchain-core
 langgraph
+python-dotenv
