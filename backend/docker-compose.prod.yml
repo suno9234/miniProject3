@@ -5,14 +5,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.prod
+      args:
+        HF_TOKEN: ${HF_TOKEN}
+        MODEL_ID: Qwen/Qwen2.5-7B-Instruct
     ports:
       - "8000:8000"
     env_file:
       - .env
     environment:
       - ENVIRONMENT=operate
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/hf_cache
+      - TRANSFORMERS_CACHE=/hf_cache
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - hf_cache:/hf_cache 
     deploy:
       resources:
         reservations:
@@ -58,5 +66,6 @@ services:
       "
 
 volumes:
+  hf_cache:
   db_data:
   es_data:

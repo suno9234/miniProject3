@@ -1,5 +1,14 @@
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
+ARG HF_TOKEN
+ARG MODEL_ID=Qwen/Qwen2.5-7B-Instruct
+
+ENV HF_TOKEN=$HF_TOKEN \
+    HF_HOME=/hf_cache \
+    MODEL_ID=$MODEL_ID \
+    TRANSFORMERS_CACHE=/hf_cache \
+    PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 python3.11-venv python3.11-distutils curl build-essential git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
@@ -12,6 +21,18 @@ COPY requirements.prod.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir -r /app/requirements.txt \
     --extra-index-url https://download.pytorch.org/whl/cu121
+
+RUN python3.11 - <<'PY'
+import os
+from transformers import AutoTokenizer, AutoModelForCausalLM
+model_id = os.environ.get("MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
+token = os.environ.get("HF_TOKEN")
+# CPU 로컬 캐시로만 받아둠(런타임엔 GPU로 다시 로드됨)
+AutoTokenizer.from_pretrained(model_id, token=token)
+AutoModelForCausalLM.from_pretrained(model_id, token=token)
+print("Prefetch done:", model_id)
+PY
+
 COPY . .
 EXPOSE 8000
 CMD ["python3.11", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
