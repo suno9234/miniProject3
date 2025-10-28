@@ -1,15 +1,16 @@
 from typing import Literal, TypedDict, Annotated, Dict, Any, List
 from langgraph.graph import add_messages
 
+MAX_CHAT_HISTORY = 20
+
 def add_message_with_limit(
     history: List[Any],
-    new_message: Any,
-    max_messages: int = 20,
+    new_message: Any
 ) -> List[Any]:
     history = list(history or [])
     history.append(new_message)
-    if len(history) > max_messages:
-        history = history[-max_messages:]
+    if len(history) > MAX_CHAT_HISTORY:
+        history = history[-MAX_CHAT_HISTORY:]
     return history
 
 class AppState(TypedDict, total=False):
@@ -22,4 +23,3 @@ class AppState(TypedDict, total=False):
     internal_search_result: Annotated[str, "내부 검색 결과"]
     generation: Annotated[str, "생성된 응답"]
     chat_history: Annotated[List[Any], "UI 채팅창에 표시될 대화 기록", add_message_with_limit]
-
