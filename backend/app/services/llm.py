@@ -12,18 +12,17 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "test")
 
 if ENVIRONMENT == "operate":
-    # In production, use a different model as needed.
-    INTERNAL_LLM_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
+    # 운영 환경에서는 Gemma 7B 모델 사용
+    INTERNAL_LLM_MODEL = "google/gemma-7b"
     device_map = "cuda"
     
     quantization_config = BitsAndBytesConfig(load_in_4bit=True)
     
-    tokenizer = AutoTokenizer.from_pretrained(INTERNAL_LLM_MODEL, token=HF_TOKEN)
+    tokenizer = AutoTokenizer.from_pretrained(INTERNAL_LLM_MODEL)
     internal_llm = AutoModelForCausalLM.from_pretrained(
         INTERNAL_LLM_MODEL,
         device_map=device_map,
-        quantization_config=quantization_config,
-        token=HF_TOKEN
+        quantization_config=quantization_config
     )
 else:
     INTERNAL_LLM_MODEL = "qwen/Qwen1.5-0.5B-Chat"
