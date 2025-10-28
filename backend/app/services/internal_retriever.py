@@ -20,14 +20,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-RERANKER_MODEL = os.getenv("RERANKER_MODEL", "jina-reranker-v2-base-multilingual")
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "jinaai/jina-reranker-v2-base-multilingual")
 # [수정] .env에서 ELASTICSEARCH_HOST 값을 읽어옵니다. (기본값은 localhost)
 ELASTICSEARCH_HOST = os.getenv("ELASTICSEARCH_HOST", "http://localhost:9200")
 
 
 # 기능 구현 class
 class Retriever:
-    def __init__(self, documents: list[str], vector_store: FaissVectorStore):
+    def __init__(self, vector_store : FaissVectorStore, documents: Optional[List[str]] = None):
         self.documents = documents
         self.vector_store = vector_store
         self._all_doc_embeddings = None
@@ -73,31 +73,40 @@ class Retriever:
     
     def sparse_search(self, query: str, top_k: int = 10) -> List[Tuple[int, float]]:
         if self.es_client is None:
-            raise RuntimeError("Elasticsearch 클라이언트가 초기화되지 않았습니다.")
-        
+            # 희소검색은 건너뛰고 dense만으로 진행할 수 있도록 빈 리스트 반환
+            print("[ES] 클라이언트 없음 → sparse_search 건너뜀")
+            return []
+
+        # 인덱스 존재 여부 체크
+        try:
+            if not self.es_client.indices.exists(index=self.es_index_name):
+                print(f"[ES] 인덱스 미존재: {self.es_index_name} → sparse_search 건너뜀")
+                return []
+        except Exception as e:
+            print(f"[ES] indices.exists 예외: {e} → sparse_search 건너뜀")
+            return []
+
         fields_to_search = ["content.nori", "content.ngram", "content.compact"]
-
-        es_query = {
-            "query": {
-                "multi_match": {
-                    "query": query,
-                    "fields": fields_to_search
-                }
-            },
-            "_source": ["original_index"], # [중요] RRF/MMR을 위해 원본 인덱스 번호를 가져옵니다.
-            "size": top_k
-        }
-
-        response = self.es_client.search(index=self.es_index_name, body=es_query)
+        try:
+            response = self.es_client.search(
+                index=self.es_index_name,
+                query={"multi_match": {"query": query, "fields": fields_to_search}},
+                _source=["original_index"],
+                size=top_k,
+            )
+        except NotFoundError:
+            print(f"[ES] NotFound: {self.es_index_name} → sparse_search 건너뜀")
+            return []
+        except Exception as e:
+            print(f"[ES] search 예외: {e} → sparse_search 건너뜀")
+            return []
 
         results = []
-        for hit in response['hits']['hits']:
-            score = hit['_score']
-            if '_score' not in hit or 'original_index' not in hit['_source']:
-                print(f"경고 : ES 결과에 ORIGINAL_INDEX 필드가 없습니다. (ID: {hit['_id']})")
+        for hit in response.get("hits", {}).get("hits", []):
+            if "_score" not in hit or "_source" not in hit or "original_index" not in hit["_source"]:
+                print(f"[ES] 결과 필드 누락 (id={hit.get('_id')})")
                 continue
-            original_index = hit['_source']['original_index']
-            results.append((original_index, score))
+            results.append((hit["_source"]["original_index"], hit["_score"]))
         return results
 
     def hybrid_search_rrf(self, query: str, top_k: int = 10, k_val: int = 60, threshold: float = 0.0) -> List[Tuple[int, float]]:
@@ -260,4 +269,60 @@ class Retriever:
         문서 인덱스 리스트를 실제 텍스트 문서 리스트로 변환합니다.
         (self.documents 리스트를 사용해 조회)
         """
-        return [self.documents[i] for i in doc_ids]
+        docs = []
+        total = len(self.documents) if self.documents else 0
+        for i in doc_ids:
+            if 0 <= i < total:
+                docs.append(self.documents[i])
+            else:
+                docs.append(f"[문서없음: {i}]")
+        return docs
+
+def load_documents_from_vdb():
+    """VDB 구축 시 사용된 문서들을 로드"""
+    # TODO: 실제 구현에서는 vdb_manual.py에서 사용한 동일한 문서들을 로드해야 함
+    # 방법 1: PDF에서 다시 로드 (vdb_manual.py의 load_and_split_pdfs 함수 재사용)
+    # 방법 2: 별도 파일에 저장된 문서 리스트 로드
+    # 방법 3: 데이터베이스에서 로드
+    
+    # 임시: 빈 리스트 반환 (팀원이 구현할 부분)
+    print("경고: load_documents_from_vdb() 함수가 구현되지 않았습니다.")
+    return ["임시 문서입니다."]
+
+def create_retriever_instance():
+    """Retriever 인스턴스 생성"""
+    try:
+        # 1. FaissVectorStore 초기화 및 인덱스 로드
+        vector_store = FaissVectorStore()
+        
+        # FAISS 인덱스 파일이 존재하면 로드
+        index_path = os.getenv("FAISS_INDEX_PATH", "./faiss.index")
+        if os.path.exists(index_path):
+            vector_store.load(index_path)
+            print(f"FAISS 인덱스 로드 완료: {vector_store.index.ntotal}개 벡터")
+        else:
+            print(f"경고: FAISS 인덱스 파일을 찾을 수 없습니다: {index_path}")
+            print("vdb_manual.py를 실행하여 인덱스를 먼저 생성하세요.")
+            return None
+        
+        # 2. 문서 리스트 로드
+        documents = load_documents_from_vdb()
+        
+        # 3. Retriever 인스턴스 생성
+        return Retriever(vector_store=vector_store, documents=documents)
+        
+    except Exception as e:
+        print(f"Retriever 인스턴스 생성 실패: {e}")
+        return None
+
+# 전역 Retriever 인스턴스 생성
+retriever_instance = create_retriever_instance()
+
+def get_documents_by_ids(doc_ids: List[int]) -> List[str]:
+    """
+    문서 인덱스 리스트를 실제 텍스트 문서 리스트로 변환합니다.
+    (self.documents 리스트를 사용해 조회)
+    """
+    if retriever_instance is None:
+        return ["Retriever 인스턴스가 초기화되지 않았습니다."]
+    return retriever_instance.get_documents_by_ids(doc_ids)

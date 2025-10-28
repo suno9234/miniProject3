@@ -1,28 +1,12 @@
-"""
-내부 DB 내용으로 답변 생성
-=============
-1. prompt build 함수
-2. agent 기능 함수 : internal_searcher
-"""
-
-# 라이브러리
-import os
-from dotenv import load_dotenv
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from app.services.internal_retriever import Retriever
-from app.services.faiss_store import FaissVectorStore
+from typing import Dict, Any, List
+from transformers.pipelines import TextGenerationPipeline
+from app.services.internal_retriever import retriever_instance
 from app.nodes.state import AppState
-from typing import Dict, Any
 from app.services.llm import internal_pipe
 
-
-
-# agent Node
-
-def _build_prompt(query: str, contexts: list[str], chat_history: list) -> str:
+def _build_prompt(query: str, contexts: List[str], chat_history: list) -> str:
     context_str = "\n".join([f"[출처: {i}] {c}" for i, c in enumerate(contexts, 1)]) if contexts else "검색된 근거 없음."
 
-    # 튜플과 dict 모두 처리
     history_strs = []
     for msg in chat_history:
         if isinstance(msg, dict) and "role" in msg and "content" in msg:
@@ -50,53 +34,65 @@ def _build_prompt(query: str, contexts: list[str], chat_history: list) -> str:
 
 [답변]
 """
-    return prompt
+    return prompt.strip()
 
-# --- 3. 핵심 노드 함수 (LangGraph가 호출할 함수) ---
-def internal_searcher(state: AppState, retriever: Retriever, internal_pipeline : internal_pipe) -> Dict[str, Any]:
+
+def internal_searcher(state: AppState) -> Dict[str, Any]:
     """
-    LangGraph의 '노드' 역할을 하는 함수입니다.
-    Retriever와 LLM Pipeline은 외부에서 '주입(injected)'받습니다.
-    
-    Args:
-        state (AppState): LangGraph로부터 전달받은 현재 상태.
-        retriever (Retriever): main 앱에서 초기화된 Retriever 객체.
-        internal_pipe (Pipeline): main 앱에서 초기화된 Transformers Pipeline 객체.
-
-    Returns:
-        Dict[str, Any]: AppState를 업데이트할 키와 값.
+    RRF+MMR+Rerank 기반 내부 검색 후, internal LLM으로 근거 인용 답변 생성
     """
     print("--- [노드 실행] internal_search_node ---")
-    
-    # 1. State에서 필요한 정보(쿼리, 대화기록)를 가져옵니다.
-    user_query = state.get("user_query", "")
-    chat_history = state.get("chat_history", [])
-    
-    # 2. Retriever를 사용해 RAG 파이프라인(RRF+MMR -> Rerank)을 실행합니다.
-    print(f"'{user_query}'에 대한 검색을 시작합니다...")
-    # (참고: retriever.retrieve()의 세부 파라미터는 state에서 받아오거나 하드코딩할 수 있습니다.)
-    results = retriever.retrieve(query=user_query, top_k=3, candidate_k=5)
-    
-    retrieved_ids = [idx for idx, score in results]
-    contexts = retriever.get_documents_by_ids(retrieved_ids)
-    
-    # 3. 검색된 근거, 쿼리, 대화 기록으로 프롬프트를 생성합니다.
+
+    # 0) LLM 파이프라인 확인
+    assert internal_pipe is not None, "internal_pipe가 초기화되지 않았습니다."
+    llm_pipe: TextGenerationPipeline = internal_pipe
+
+    # 1) 입력
+    user_query = state.get("user_query", "") or ""
+    chat_history = state.get("chat_history", []) or []
+
+    # 2) 검색 (예외 흡수 + 폴백)
+    contexts: List[str] = []
+    if retriever_instance is None:
+        print("[Retriever] retriever_instance가 None입니다. 컨텍스트 없이 진행합니다.")
+    else:
+        try:
+            results = retriever_instance.retrieve(query=user_query, top_k=3, candidate_k=5)
+            retrieved_ids = [idx for idx, _ in results] if results else []
+            if retrieved_ids:
+                try:
+                    contexts = retriever_instance.get_documents_by_ids(retrieved_ids) or []
+                except Exception as e:
+                    print(f"[Retriever] get_documents_by_ids 예외: {e}")
+                    contexts = []
+            else:
+                print("[Retriever] 검색 결과가 비어있습니다.")
+        except Exception as e:
+            print(f"[Retriever] retrieve 예외: {e}  -> 컨텍스트 없이 진행")
+
+    # 3) 프롬프트 생성
     prompt = _build_prompt(user_query, contexts, chat_history)
-    
-    # 4. 주입받은 Internal LLM 파이프라인으로 답변을 생성합니다.
+
+    # 4) LLM 호출 (pad_token_id/파싱 방어)
     print("검색된 컨텍스트로 답변 생성을 시작합니다...")
     try:
-        response = internal_pipeline(prompt)
-        answer = response[0]['generated_text'].split("[답변]\n")[-1].strip()
+        pad_id = getattr(getattr(llm_pipe, "tokenizer", None), "eos_token_id", None)
+        response = llm_pipe(
+            prompt,
+            do_sample=True,
+            temperature=0.3,
+            max_new_tokens=300,
+            pad_token_id=pad_id,
+            return_full_text=False,
+        )
+        gen = response[0].get("generated_text", "") if response and isinstance(response, list) else ""
+        answer = gen.split("[답변]\n", 1)[-1].strip() if "[답변]" in gen else (gen or "답변을 생성하지 못했습니다.").strip()
     except Exception as e:
         print(f"LLM 답변 생성 중 오류 발생: {e}")
         answer = "답변 생성 중 오류가 발생했습니다."
 
-    # 5. LangGraph가 State를 업데이트할 수 있도록 결과를 딕셔너리로 반환합니다.
+    # 5) 반환
     return {
         "internal_documents": contexts,
         "internal_search_result": answer
     }
-
-
-    
