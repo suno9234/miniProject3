@@ -12,8 +12,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "test")
 
 if ENVIRONMENT == "operate":
-    # 운영 환경에서는 Gemma 7B 모델 사용
-    INTERNAL_LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
+    INTERNAL_LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"
     device_map = "cuda"
     
     quantization_config = BitsAndBytesConfig(load_in_4bit=True)
