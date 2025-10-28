@@ -26,15 +26,23 @@ services:
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
+    container_name: elasticsearch
     environment:
-      - "discovery.type=single-node"
-      - "xpack.security.enabled=false" # 개발용으로 보안 기능 비활성화
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g" # Java 힙 메모리 1GB로 설정
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
     ports:
-      - "9200:9200" # 호스트와 컨테이너의 9200 포트 연결
+      - "9200:9200"
       - "9300:9300"
     volumes:
       - es_data:/usr/share/elasticsearch/data
+    command: >
+      sh -c "
+        if [ ! -d /usr/share/elasticsearch/plugins/analysis-nori ]; then
+          bin/elasticsearch-plugin install --batch analysis-nori;
+        fi;
+        exec bin/elasticsearch
+      "
 
 volumes:
   db_data:
