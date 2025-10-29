@@ -1,6 +1,8 @@
 import re, json
 from app.nodes.state import AppState
 from app.services.llm import internal_pipe
+import sys
+sys.stdout.reconfigure(line_buffering=True, encoding='utf-8')
 
 # Fallback
 # LLM호출 실패 시 기본 정규식 기반 탐지를 통해 최소한의 민감데이터 마스킹
@@ -14,20 +16,26 @@ class QueryNormalizer:
 
     def _build_prompt(self, raw_query: str) -> str:
         return f"""
-당신은 사용자의 음성/STT 질의를 자연스럽고 간결한 텍스트 쿼리로 정제하는 도우미다.
+    당신은 사용자의 음성/STT 질의를 간결한 텍스트 쿼리로 '정제'만 하는 도우미다.
 
-규칙:
-- '어', '음', '그니까' 같은 말버릇 삭제
-- 중복 표현 정리
-- 의미 왜곡 금지 (정보 추가 금지)
-- 불완전하면 자연스러운 질문형으로 마무리
-- 정제된 문장만 한 줄로 출력. 설명/따옴표 금지.
+    # 규칙
+    - 말버릇(예: 어, 음, 그러니까) 삭제
+    - 중복 표현/군더더기 제거
+    - 의미 왜곡/추가 금지 (없는 정보 만들지 말 것)
+    - 불완전하면 자연스러운 '질문형'으로 마무리
+    - 수치/기호/날짜/코드/번호는 그대로 둔다. 주의·경고·면책문을 절대 추가하지 말 것.
+    - 출력은 반드시 <norm> … </norm> 태그 한 줄만. 태그 밖의 글자/공백/설명 금지.
 
-사용자 질의:
-{raw_query}
+    # 예시
+    사용자 질의: "어... 그니까 내일 10시에 회의 있지?"
+    정제된 질의: <norm>내일 10시 회의가 맞나요?</norm>
 
-정제된 질의:
-""".strip()
+    사용자 질의: "음 가격 129,000원으로 다시 할 수 있어?"
+    정제된 질의: <norm>가격을 129,000원으로 다시 적용할 수 있나요?</norm>
+
+    사용자 질의: "{raw_query}"
+    정제된 질의:
+    """.strip()
 
     def _call_model(self, prompt: str) -> str:
         # internal_pipe는 HF pipeline("text-generation")이라고 가정
