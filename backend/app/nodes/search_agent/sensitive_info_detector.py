@@ -2,7 +2,7 @@ import re, json
 from app.nodes.state import AppState
 from app.services.llm import internal_pipe
 import sys
-sys.stdout.reconfigure(line_buffering=True, encoding='utf-8')
+
 
 # -----------------------------
 # 공통: 패턴 정의
