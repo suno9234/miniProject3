@@ -40,6 +40,7 @@ ANSWER_PROMPT_TEMPLATE = """당신은 기술 지원 에이전트입니다. 아�
     내부 자료가 질문에 충분한 근거를 제공하면 내부 자료만 사용하세요. 내부에 빈칸이 있을 때만 외부 자료로 보완하세요.
     추측이나 일반 상식만으로 채우지 말고, 제공된 내부/외부 텍스트에 근거가 있을 때만 서술하세요.
     답변은 한국어 문장체로, 사용자가 바로 행동할 수 있도록 단계적으로 간결하게 작성하세요.
+    - 주의: '사용자 질문' 텍스트를 재구성하거나 새로 만들지 말 것. 그대로 사용하라.
 
     [사용자 질문]
     {user_query}
@@ -63,7 +64,7 @@ def _call_internal_llm(prompt: str, max_new_tokens: int = 500) -> str:
     """Qwen(TextGenerationPipeline) 호출 래퍼"""
     outputs = llm_pipe(
         prompt,
-        do_sample=True,
+        do_sample=False,
         temperature=0.2,
         top_p=0.9,
         max_new_tokens=max_new_tokens,
@@ -113,17 +114,20 @@ def response_generator_node(state: AppState) -> Dict[str, Any]:
     단일 LLM 프롬프트로 내부/외부/둘다 중 소스 선택을 LLM에게 맡기고,
     최종 답변(generation)을 생성하여 state에 저장.
     """
-    user_query = state.get("user_query").strip()
+    user_query = (
+        state.get("masked_user_query")
+        or state.get("user_query")
+        or ""
+    ).strip()
 
-    internal_docs = state.get("internal_documents") or []
-    if not isinstance(internal_docs, list):
-        internal_docs = [str(internal_docs)]
-    internal_text = "\n".join(internal_docs)
+    masked_user_query = state.get("masked_user_query")
 
+    internal_text = state.get("internal_search_result") or ""
     external_text = state.get("external_search_result") or ""
 
     # ---- 디버깅: 입력 프린트
     print("========== [response_generator_node] ==========")
+    print(f"\n[MaskedUserQuery]\n{masked_user_query}\n")
     print(f"[Query]\n{user_query}\n")
     print(f"[Internal(len={len(internal_text)})]\n{internal_text[:800]}{'...' if len(internal_text) > 800 else ''}\n")
     print(f"[External(len={len(external_text)})]\n{external_text[:800]}{'...' if len(external_text) > 800 else ''}\n")
