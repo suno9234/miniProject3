@@ -54,21 +54,21 @@ class QueryNormalizer:
     def apply(self, state: AppState) -> AppState:
         raw = state.get("user_query", "") or ""
 
-        prompt = self._build_prompt(raw)
-        try:
-            normalized = self._call_model(prompt)
-        except Exception as e:
-            print(f"[QueryNormalizer] local model failed ({e}), fallback to raw.")
-            normalized = raw
+        # prompt = self._build_prompt(raw)
+        # try:
+        #     normalized = self._call_model(prompt)
+        # except Exception as e:
+        #     print(f"[QueryNormalizer] local model failed ({e}), fallback to raw.")
+        #     normalized = raw
 
-        if not normalized.strip():
-            normalized = raw
+        # if not normalized.strip():
+        #     normalized = raw
 
-        new_state: AppState = {**state}
-        new_state["user_query"] = normalized
-        print("Normalize 완료")
-        print(normalized)
-        return new_state
+        # new_state: AppState = {**state}
+        # new_state["user_query"] = normalized
+        # print("Normalize 완료")
+        # print(normalized)
+        return state
 
 
 # SensitiveInfoDetector #
