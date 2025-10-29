@@ -1,10 +1,12 @@
+# main.py
 import logging
-import subprocess
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.agent_router import router as agent_router
 
-# 로깅 설정
+# ⬇️ build_all_vdbs 함수 직접 import
+from app.services.vdb_manual import build_all_vdbs
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -21,19 +23,12 @@ app.add_middleware(
 
 app.include_router(agent_router)
 
-
-# ✅ 서버 시작 시 vdb_manual.py 실행
+# 서버 시작 시 직접 함수 실행
 @app.on_event("startup")
 async def startup_event():
-    logging.info("=== 서버 시작: vdb_manual.py 실행 ===")
-    try:
-        subprocess.run(
-            ["python", "app/services/vdb_manual.py"], check=True
-        )
-        logging.info("vdb_manual.py 실행 완료")
-    except subprocess.CalledProcessError as e:
-        logging.error(f"vdb_manual.py 실행 실패: {e}")
-
+    logging.info("=== 서버 시작: VDB 빌드 시작 ===")
+    build_all_vdbs()
+    logging.info("=== VDB 빌드 완료 ===")
 
 if __name__ == "__main__":
     import uvicorn
