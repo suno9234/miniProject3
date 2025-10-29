@@ -60,6 +60,8 @@ class QueryNormalizer:
 
         new_state: AppState = {**state}
         new_state["user_query"] = normalized
+        print("Normalize 완료")
+        print(normalized)
         return new_state
 
 
@@ -175,4 +177,6 @@ JSON 한 줄만 출력하라. 마크다운/설명 금지.
         new_state: AppState = {**state}
         new_state["is_sensitive"] = has_sensitive
         new_state["masked_user_query"] = safe_query
+        print("마스킹 처리 완료")
+        print(safe_query)
         return new_state
