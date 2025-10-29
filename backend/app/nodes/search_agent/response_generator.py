@@ -106,7 +106,7 @@ def _build_report(state: AppState, summary: SynthSummary) -> str:
 # ==================================
 # 메인 노드
 # ==================================
-async def response_generator_node(state: AppState) -> AppState:
+def response_generator_node(state: AppState) -> AppState:
     """보고서 + 간결한 자연어 답변 생성"""
     query = (state.get("masked_user_query") or state.get("user_query") or "").strip()
     internal_docs = state.get("internal_documents") or []
@@ -115,20 +115,20 @@ async def response_generator_node(state: AppState) -> AppState:
     joined_internal = "\n".join(internal_docs)
     external_raw = state.get("external_search_result") or ""
     # :일: 구조화된 요약 생성
-    summary: SynthSummary = await _summary_chain.ainvoke({
+    summary: SynthSummary = _summary_chain.invoke({
         "query": query,
         "internal": joined_internal,
         "external": external_raw,
     })
     # :둘: 자연어 전체 설명 생성
-    answer_msg = await _answer_chain.ainvoke({
+    answer_msg = _answer_chain.invoke({
         "key_points": "\n".join(summary.key_points),
         "cautions": "\n".join(summary.cautions),
         "recommended_steps": "\n".join(summary.recommended_steps),
     })
     full_answer = answer_msg.content.strip()
     # :셋: 핵심 요약 (1~2문장)
-    short_msg = await _short_chain.ainvoke({"paragraph": full_answer})
+    short_msg = _short_chain.invoke({"paragraph": full_answer})
     concise_answer = short_msg.content.strip()
     # :넷: DB 저장용 (첫 문장)
     short_answer = concise_answer.split(".")[0].strip() + "."
@@ -139,5 +139,9 @@ async def response_generator_node(state: AppState) -> AppState:
     print(f"답변: {concise_answer}")
     print("─────────────────────────────────────────────")
     # :여섯: DB 저장
-    await db_service.save_daily_report(state, short_answer)
-    return state
+    # await db_service.save_daily_report(state, short_answer)
+    
+    return {
+        **state,
+        "generation": concise_answer
+    }
