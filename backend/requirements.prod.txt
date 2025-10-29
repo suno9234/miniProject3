@@ -30,3 +30,4 @@ bitsandbytes==0.43.3
 
 python-dotenv
 requests
+pypdf
