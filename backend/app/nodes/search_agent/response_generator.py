@@ -1,8 +1,12 @@
 """
 검색 에이전트 - 내부/외부 결과 종합 후 보고서 출력 (간결 자연어 답변 포함)
-출력 형식:
-[일일 대화 보고서]
-...
+
+출력 형식(콘솔 프린트):
+[간단 보고서]
+생성 시각 : YYYY-MM-DD HH:MM
+사용자 질의 : ...
+내부 길이/외부 길이 : ...
+소스 선택 : internal|external|both
 ─────────────────────────────────────────────
 질문: ...
 답변: ...
@@ -10,138 +14,150 @@
 """
 
 from __future__ import annotations
-from typing import List
+import re
 from datetime import datetime
-from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
+from typing import Dict, Any, List, Tuple, Optional
+
 from app.nodes.state import AppState
-from app.services.llm import llm
-from app.services.db import db_service
+from transformers.pipelines import TextGenerationPipeline
+from app.services.llm import internal_pipe  # Qwen TextGenerationPipeline
 
-# ==================================
-# 구조화 출력 스키마
-# ==================================
-class SynthSummary(BaseModel):
-    key_points: List[str] = Field(default_factory=list)
-    cautions: List[str] = Field(default_factory=list)
-    recommended_steps: List[str] = Field(default_factory=list)
+# 내부 LLM 파이프라인
+llm_pipe: TextGenerationPipeline = internal_pipe
+PAD_ID = getattr(getattr(llm_pipe, "tokenizer", None), "eos_token_id", None)
+if PAD_ID is None:
+    PAD_ID = 0
 
-# ==================================
-# LLM 프롬프트 정의
-# ==================================
-_SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        "너는 내부 매뉴얼과 외부 검색 결과를 종합하여 구조화된 분석 보고서를 작성하는 전문가이다. "
-        "핵심 요지, 주의/제약, 권장 절차를 명확히 구분하여 제시하라."
-    ),
-    (
-        "user",
-        "다음 정보를 종합하여 구조화된 요약을 만들어라.\n\n"
-        "[사용자 질문]\n{query}\n\n"
-        "[내부 결과]\n{internal}\n\n"
-        "[외부 결과]\n{external}\n"
-    ),
-])
-# 자연스러운 전체 답변 생성
-_ANSWER_PROMPT = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        "너는 사용자의 질문에 대한 응답을 사용자에게 제공하는 전문가이다. "
-        "핵심 요지, 주의사항, 권장 절차의 모든 내용을 종합하여 자연스럽고 구체적인 문장으로 설명하라. "
-        "모든 정보를 반드시 포함하되, 문장체로 작성하라. "
-        "불릿(-)이나 번호는 사용하지 말고, '또한', '따라서', '특히' 등의 연결어를 활용하라."
-    ),
-    (
-        "user",
-        "다음 정보를 종합하여 사용자에게 설명하라.\n\n"
-        "[핵심 요지]\n{key_points}\n\n"
-        "[주의/제약]\n{cautions}\n\n"
-        "[권장 절차]\n{recommended_steps}"
-    ),
-])
-# 핵심 문장만 요약하는 프롬프트
-_SHORT_ANSWER_PROMPT = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        "너는 외부 검색 결과/내부 매뉴얼 검색 결과를 핵심 두 문장 이내로 간결하게 요약하여 사용자에게 설명하는 전문가이다. "
-        "가장 중요한 행동 지침만 남기고, 부가적인 세부 설명은 생략하라."
-    ),
-    (
-        "user",
-        "다음 문단의 핵심 내용만 1~2문장으로 요약하라.\n\n{paragraph}"
-    ),
-])
-# LLM 체인 생성
-_summary_chain = _SUMMARY_PROMPT | llm.with_structured_output(SynthSummary)
-_answer_chain = _ANSWER_PROMPT | llm
-_short_chain = _SHORT_ANSWER_PROMPT | llm
-# ==================================
-# 보고서 생성 함수
-# ==================================
-def _build_report(state: AppState, summary: SynthSummary) -> str:
-    """일일 대화 보고서 본문 생성"""
+# ---------------------------------------------------------------------
+# 단일 프롬프트: 내부/외부/둘다 중 무엇을 사용할지 LLM이 스스로 결정
+# - 반드시 아래 태그를 포함하여 반환:
+#   <FINAL_ANSWER>...최종 사용자 답변...</FINAL_ANSWER>
+# - 내부가 충분하면 내부를 우선하되, 불충분한 부분만 외부로 보완
+# - 추측 금지, 내부/외부에 근거 없는 내용 금지
+# ---------------------------------------------------------------------
+
+ANSWER_PROMPT_TEMPLATE = """당신은 기술 지원 에이전트입니다. 아래 정보를 바탕으로 사용자 질문에 가장 정확하고 실행 가능한 답변을 작성하세요.
+    내부 자료가 질문에 충분한 근거를 제공하면 내부 자료만 사용하세요. 내부에 빈칸이 있을 때만 외부 자료로 보완하세요.
+    추측이나 일반 상식만으로 채우지 말고, 제공된 내부/외부 텍스트에 근거가 있을 때만 서술하세요.
+    답변은 한국어 문장체로, 사용자가 바로 행동할 수 있도록 단계적으로 간결하게 작성하세요.
+
+    [사용자 질문]
+    {user_query}
+
+    [내부 검색 결과]
+    {internal}
+
+    [외부 검색 결과]
+    {external}
+
+    다음의 태그만 포함하여 출력하라. 다른 텍스트는 절대 추가하지 말 것.
+    <FINAL_ANSWER>
+    ...최종 사용자 답변...
+    </FINAL_ANSWER>
+    """.strip()
+
+_RE_ANS = re.compile(r"<FINAL_ANSWER>\s*(.*?)\s*</FINAL_ANSWER>", re.I | re.S)
+
+
+def _call_internal_llm(prompt: str, max_new_tokens: int = 500) -> str:
+    """Qwen(TextGenerationPipeline) 호출 래퍼"""
+    outputs = llm_pipe(
+        prompt,
+        do_sample=True,
+        temperature=0.2,
+        top_p=0.9,
+        max_new_tokens=max_new_tokens,
+        pad_token_id=PAD_ID,
+        return_full_text=False,
+
+    )
+    if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
+        return outputs[0].get("generated_text", "")
+    if isinstance(outputs, str):
+        return outputs
+    return str(outputs)
+
+
+def _parse_llm_output(raw: str) -> str:
+    """
+    <FINAL_ANSWER>...</FINAL_ANSWER> 파싱.
+    실패 시 합리적 기본값으로 폴백.
+    """
+    m_ans = _RE_ANS.search(raw)
+    final_answer = (m_ans.group(1).strip() if m_ans else raw.strip())
+    return final_answer
+
+
+def _build_report(
+    user_query: str,
+    internal_text: str,
+    external_text: str,
+    final_answer: str,
+) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    result_text = []
-    if summary.key_points:
-        result_text.append("- 핵심 요지\n  - " + "\n  - ".join(summary.key_points))
-    if summary.cautions:
-        result_text.append("- 주의/제약\n  - " + "\n  - ".join(summary.cautions))
-    if summary.recommended_steps:
-        result_text.append("- 권장 절차\n  - " + "\n  - ".join(summary.recommended_steps))
-    combined = "\n".join(result_text)
     return f"""
-        [일일 대화 보고서]
+        [간단 보고서]
         생성 시각 : {now}
-        사용자 질의 : {state.get('user_query', '')}
-        민감 여부 : {"Yes" if state.get("is_sensative") else "No"}
-        [외부 결과]
-        {state.get('external_search_result', '(없음)')}
-        [내부 결과]
-        {state.get('internal_documents', '(없음)')}
-        [결과 종합 및 도출]
-        {combined}
+        사용자 질의 : {user_query}
+        내부 길이 / 외부 길이 : {len(internal_text)} / {len(external_text)}
+
+        ─────────────────────────────────────────────
+        질문: {user_query}
+        답변: {final_answer}
+        ─────────────────────────────────────────────
         """.strip()
 
-# ==================================
-# 메인 노드
-# ==================================
-def response_generator_node(state: AppState) -> AppState:
-    """보고서 + 간결한 자연어 답변 생성"""
-    query = (state.get("masked_user_query") or state.get("user_query") or "").strip()
+
+def response_generator_node(state: AppState) -> Dict[str, Any]:
+    """
+    단일 LLM 프롬프트로 내부/외부/둘다 중 소스 선택을 LLM에게 맡기고,
+    최종 답변(generation)을 생성하여 state에 저장.
+    """
+    user_query = state.get("user_query").strip()
+
     internal_docs = state.get("internal_documents") or []
     if not isinstance(internal_docs, list):
         internal_docs = [str(internal_docs)]
-    joined_internal = "\n".join(internal_docs)
-    external_raw = state.get("external_search_result") or ""
-    # :일: 구조화된 요약 생성
-    summary: SynthSummary = _summary_chain.invoke({
-        "query": query,
-        "internal": joined_internal,
-        "external": external_raw,
-    })
-    # :둘: 자연어 전체 설명 생성
-    answer_msg = _answer_chain.invoke({
-        "key_points": "\n".join(summary.key_points),
-        "cautions": "\n".join(summary.cautions),
-        "recommended_steps": "\n".join(summary.recommended_steps),
-    })
-    full_answer = answer_msg.content.strip()
-    # :셋: 핵심 요약 (1~2문장)
-    short_msg = _short_chain.invoke({"paragraph": full_answer})
-    concise_answer = short_msg.content.strip()
-    # :넷: DB 저장용 (첫 문장)
-    short_answer = concise_answer.split(".")[0].strip() + "."
-    # :다섯: 출력
-    print(_build_report(state, summary))
-    print("\n─────────────────────────────────────────────")
-    print(f"질문: {query}")
-    print(f"답변: {concise_answer}")
-    print("─────────────────────────────────────────────")
-    # :여섯: DB 저장
-    # await db_service.save_daily_report(state, short_answer)
-    
+    internal_text = "\n".join(internal_docs)
+
+    external_text = state.get("external_search_result") or ""
+
+    # ---- 디버깅: 입력 프린트
+    print("========== [response_generator_node] ==========")
+    print(f"[Query]\n{user_query}\n")
+    print(f"[Internal(len={len(internal_text)})]\n{internal_text[:800]}{'...' if len(internal_text) > 800 else ''}\n")
+    print(f"[External(len={len(external_text)})]\n{external_text[:800]}{'...' if len(external_text) > 800 else ''}\n")
+
+    prompt = ANSWER_PROMPT_TEMPLATE.format(
+        user_query=user_query,
+        internal=internal_text if internal_text else "(없음)",
+        external=external_text if external_text else "(없음)",
+    )
+    raw = _call_internal_llm(prompt)
+    final_answer = _parse_llm_output(raw)
+
+    # 형식 미준수 시 1회 재시도(권장)
+    if not _RE_ANS.search(raw):
+        repair_prompt = (
+            prompt
+            + "\n\n주의: 형식을 지키지 않았습니다. 아래 형식만 포함하여 다시 출력하세요.\n"
+              "<FINAL_ANSWER>\n...최종 사용자 답변...\n</FINAL_ANSWER>"
+        )
+        raw2 = _call_internal_llm(repair_prompt)
+        if _RE_ANS.search(raw2):
+            final_answer = _parse_llm_output(raw2)
+            raw = raw2  # 디버깅 표시를 위해 교체
+
+    # ---- 디버깅: 출력 프린트
+    print("[RAW OUTPUT]\n" + raw[:1200] + ("..." if len(raw) > 1200 else ""))
+    print(f"[PARSED] final_answer={final_answer[:400]}{'...' if len(final_answer) > 400 else ''}")
+
+    # 간단 보고서 프린트
+    report = _build_report(user_query, internal_text, external_text, final_answer)
+    print("\n" + report + "\n")
+
+    # state 업데이트
     return {
         **state,
-        "generation": concise_answer
+        "generation": final_answer
     }
