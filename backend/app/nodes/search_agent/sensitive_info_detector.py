@@ -2,7 +2,7 @@ import re, json
 from app.nodes.state import AppState
 from app.services.llm import internal_pipe
 import sys
-sys.stdout.reconfigure(line_buffering=True, encoding='utf-8')
+
 
 # -----------------------------
 # 공통: 패턴 정의
@@ -98,7 +98,7 @@ class QueryNormalizer:
         new_state: AppState = {**state}
         new_state["user_query"] = normalized
         print("Normalize 완료")
-        print(normalized)
+        print(json.dumps(normalized, ensure_ascii=False))  
         return new_state
 
 
@@ -247,5 +247,5 @@ class SensitiveInfoDetector:
         new_state["is_sensitive"] = has_sensitive
         new_state["masked_user_query"] = safe_query
         print("마스킹 처리 완료")
-        print(safe_query)
+        print(json.dumps(safe_query, ensure_ascii=False))  
         return new_state
