@@ -9,6 +9,7 @@ langchain
 langchain-openai
 langchain-core
 langgraph
+langchain-text-splitters
 
 elasticsearch>=8,<9
 faiss-cpu==1.12.0
