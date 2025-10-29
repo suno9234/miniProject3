@@ -16,4 +16,4 @@ torch==2.9.0
 bitsandbytes
 accelerate
 python-dotenv
-
+pypdf
