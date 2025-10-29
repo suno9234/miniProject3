@@ -1,3 +1,8 @@
+import asyncio
+import platform
+
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import aiomysql
 import os
 from dotenv import load_dotenv
@@ -17,7 +22,7 @@ async def ensure_tables():
         db=os.getenv('DB_NAME'),
         charset='utf8mb4'
     )
-    
+
     try:
         async with conn.cursor() as cursor:
             # TODO: 필요한 테이블들 CREATE TABLE IF NOT EXISTS 구문 추가
@@ -45,9 +50,25 @@ async def ensure_tables():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """)
+
+            # 보고서 테이블
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS daily_report (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_query VARCHAR(255) NOT NULL COMMENT '사용자 질문',
+                is_sensitive BOOLEAN DEFAULT FALSE COMMENT '민감 여부 (Yes/No)',
+                external_result TEXT COMMENT '외부 LLM 검색 결과',
+                internal_result TEXT COMMENT '내부 RAG 또는 사내 문서 결과',
+                key_points TEXT COMMENT '핵심 요지 요약',
+                cautions TEXT COMMENT '주의/제약 사항 요약',
+                recommended_steps TEXT COMMENT '권장 절차 요약',
+                short_answer VARCHAR(255) COMMENT '한 줄 요약 답변',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '생성 시각'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
         await conn.commit()
         
-        # ✅ 더미데이터 삽입 (조건: 유저 2명 미만 / 아이템 5개 미만)
+        # :흰색_확인_표시: 더미데이터 삽입 (조건: 유저 2명 미만 / 아이템 5개 미만)
         async with conn.cursor() as cursor:
             # 현재 유저/아이템 수 조회
             await cursor.execute("SELECT COUNT(*) FROM user;")
@@ -88,14 +109,13 @@ async def ensure_tables():
                 print(f"[SEED] item inserted ({5 - item_count} missing rows filled)")
 
         await conn.commit()
-        print("[DB INIT] 기본 데이터 삽입 완료 ✅")
+        print("[DB INIT] 기본 데이터 삽입 완료 :흰색_확인_표시:")
     finally:
         await conn.ensure_closed()
 
 class DatabaseService:
     def __init__(self):
         self.pool: Optional[aiomysql.Pool] = None
-    
     async def connect(self):
         self.pool = await aiomysql.create_pool(
             host=os.getenv('DB_HOST', 'localhost'),
@@ -106,16 +126,44 @@ class DatabaseService:
             charset='utf8mb4'
         )
         await ensure_tables()
-    
+
     @asynccontextmanager
     async def get_connection(self):
         async with self.pool.acquire() as conn:
             yield conn
-    
+
     async def close(self):
         if self.pool:
             self.pool.close()
             await self.pool.wait_closed()
+
+    async def save_daily_report(self, state, short_answer: str):
+        """daily_report 테이블에 일일 보고서를 저장"""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    INSERT INTO daily_report
+                    (user_query, is_sensitive, external_result, internal_result,
+                     key_points, cautions, recommended_steps, short_answer)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        state.get("user_query", ""),
+                        bool(state.get("is_sensative", False)),
+                        str(state.get("external_search_result", ""))[:1000],
+                        str(state.get("internal_documents", ""))[:1000],
+                        "\n".join(state.get("summary", {}).get("key_points", []))
+                        if isinstance(state.get("summary"), dict) else "",
+                        "\n".join(state.get("summary", {}).get("cautions", []))
+                        if isinstance(state.get("summary"), dict) else "",
+                        "\n".join(state.get("summary", {}).get("recommended_steps", []))
+                        if isinstance(state.get("summary"), dict) else "",
+                        short_answer,
+                    )
+                )
+                await conn.commit()
+                print(":흰색_확인_표시: 보고서 DB 저장 완료")
 
 # 전역 인스턴스
 db_service = DatabaseService()
@@ -148,14 +196,11 @@ async def _print_snapshot(conn):
 async def _main():
     # .env 로드 (환경변수 사용 시)
     load_dotenv()
-
     # 풀 생성 + 테이블 보장 + 시드(조건부)
     await db_service.connect()
-
     # 연결 하나 빌려서 스냅샷 출력
     async with db_service.get_connection() as conn:
         await _print_snapshot(conn)
-
     # 풀 정리
     await db_service.close()
 
